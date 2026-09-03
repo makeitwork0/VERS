@@ -1,0 +1,10 @@
+{
+    "smtp_server": "smtp.gmail.com",
+    "smtp_port": 587,
+    "sender_email": "your_email@gmail.com",
+    "sender_password": "your_app_password",
+    "recipient_email": "your_email@gmail.com",
+    "api_key": "",
+    "dashboard_password": "vers_admin_password",
+    "owm_api_key": ""
+}

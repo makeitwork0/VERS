@@ -1,0 +1,642 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VERS - Critical Infrastructure Monitor</title>
+    <!-- Resource Hints for CDN assets -->
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <link rel="preconnect" href="https://unpkg.com" crossorigin>
+    <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+    <link rel="dns-prefetch" href="https://unpkg.com">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <!-- Leaflet Velocity (Wind Animation) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-velocity/dist/leaflet-velocity.min.css" />
+    <script src="https://unpkg.com/leaflet-velocity/dist/leaflet-velocity.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.1/socket.io.js"></script>
+    
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="toastContainer" style="position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 9999; display: flex; flex-direction: column; gap: 10px; width: 320px; pointer-events: none;"></div>
+    <div id="topbar">
+        <h1>VERS - Critical Infrastructure Monitor</h1>
+        <div class="topbar-center">
+            <div class="timestamp" id="timestamp">--:--:--</div>
+            <div id="playbackControls" style="display: none; align-items: center; gap: 10px; margin-right: 15px;">
+                <input type="range" id="playbackSlider" min="0" max="0" value="0" style="width: 180px; accent-color: #fa0; cursor: pointer;">
+                <span id="playbackTime" style="color: #fa0; font-family: monospace; font-size: 13px;">--:--:--</span>
+            </div>
+            <div class="status-badge" id="statusBadge">CONNECTING...</div>
+            <span id="connBanner" style="color:#fa0;">📶 CONNECTING</span>
+        </div>
+        <div class="topbar-right">
+            <div id="desktopTopbarControls" style="display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: nowrap;">
+                <div class="kpi-metrics" style="display:flex; gap:15px; margin-right: 20px; font-size:12px; font-weight:600; color:var(--text-muted);">
+                    <div>SYS: <span style="color:var(--primary)">NOMINAL</span></div>
+                    <div>NET: <span style="color:var(--primary)">99.8%</span></div>
+                </div>
+                <!-- Always visible: public controls -->
+                <a href="/report" class="btn btn-cyan">📢 Report Incident</a>
+                <button id="hazardHunterBtn" onclick="toggleHazardHunter()" class="btn btn-green">🎯 Hazard Assessment</button>
+                
+                
+                <!-- Operator-only controls (hidden until login) -->
+                <span id="operatorControls" style="display: none; gap: 8px; align-items: center;">
+                    <button id="playbackToggleBtn" onclick="togglePlaybackMode()" class="btn btn-orange">⏮ Playback Mode</button>
+                    
+                    <div class="ql-dropdown">
+                        <button class="btn btn-gray" onclick="document.getElementById('opMobileDropdown').classList.toggle('open')">☰ Operator Menu</button>
+                        <div id="opMobileDropdown" class="ql-dropdown-menu">
+                            <div class="ql-section">Operator Controls</div>
+                            <a href="#" onclick="document.getElementById('opMobileDropdown').classList.remove('open'); openSettings(); return false;" class="ql-link">⚙️ Settings</a>
+                            <a href="#" onclick="document.getElementById('opMobileDropdown').classList.remove('open'); testVoice(); return false;" class="ql-link">🔊 Test Voice</a>
+                            <a href="/logout" class="ql-link" style="color: #ff4757; font-weight: 700;">🔓 Logout</a>
+                        </div>
+                    </div>
+                </span>
+                
+                <!-- Login button (visible only when not logged in) -->
+                <a href="/login" id="loginBtn" class="btn btn-orange" style="background: rgba(255,170,0,0.15); color: #fa0; border: 1px solid #fa0;">🔐 Operator Login</a>
+            </div>
+
+            <!-- Mobile Master Menu Toggle (Hidden on Desktop) -->
+            <div id="mobileTopbarControls" class="ql-dropdown" style="display: none;">
+                <button class="btn btn-gray" onclick="document.getElementById('masterMobileDropdown').classList.toggle('open')">☰ Menu</button>
+                <div id="masterMobileDropdown" class="ql-dropdown-menu" style="right: 0; min-width: 220px; text-align: left;">
+                    <div class="ql-section">Public Tools</div>
+                    <a href="/report" class="ql-link">📢 Report Incident</a>
+                    <a href="#" onclick="document.getElementById('masterMobileDropdown').classList.remove('open'); toggleHazardHunter(); return false;" class="ql-link">🎯 Hazard Assessment</a>
+                    
+                    <div class="operator-only" style="display: none;">
+                        <div class="ql-section">Operator Controls</div>
+                        <a href="#" onclick="document.getElementById('masterMobileDropdown').classList.remove('open'); togglePlaybackMode(); return false;" class="ql-link">⏮ Playback Mode</a>
+                        <a href="#" onclick="document.getElementById('masterMobileDropdown').classList.remove('open'); openSettings(); return false;" class="ql-link">⚙️ Settings</a>
+                        <a href="#" onclick="document.getElementById('masterMobileDropdown').classList.remove('open'); testVoice(); return false;" class="ql-link">🔊 Test Voice</a>
+                        <a href="/logout" class="ql-link" style="color: #ff4757; font-weight: 700;">🔓 Logout</a>
+                    </div>
+                    
+                    <a href="/login" id="mobileLoginBtn" class="ql-link" style="color: #fa0; font-weight: 700;">🔐 Operator Login</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="pagasaTicker">
+        <div class="ticker-content" id="pagasaTickerContent">Loading PAGASA bulletins...</div>
+    </div>
+
+    <div id="container">
+        <div id="leftpanel">
+            <div class="mobile-drawer-header">
+                <span class="drawer-title">🚨 Alerts & Monitoring</span>
+                <button class="drawer-close-btn" onclick="closeMobilePanels()">✕ Close</button>
+            </div>
+            <div class="card">
+                <h3>Global Status & Alerts</h3>
+                <div id="alerts" style="max-height: 250px; overflow-y: auto;">
+                    <div id="nodata">No active alerts</div>
+                </div>
+            </div>
+            
+            <div class="card" style="margin-top: 15px;">
+                <h3>🔍 Monitoring (Risk & Threats)</h3>
+                <div id="monitoringList" style="max-height: 200px; overflow-y: auto; font-size: 13px;">
+                    <div id="nodata_monitoring" style="color: #666; text-align: center; padding: 10px;">Scanning for threats...</div>
+                </div>
+            </div>
+            <div class="card operator-only">
+                <h3>📢 Operator Broadcast</h3>
+                <div style="display: flex; gap: 8px; margin-top: 10px;">
+                    <input type="text" id="broadcastInput" style="flex: 1;" placeholder="Type broadcast message...">
+                    <button onclick="sendBroadcast()" class="btn btn-cyan">Send</button>
+                </div>
+            </div>
+            <!-- Node cards injected here -->
+        </div>
+
+        <div id="mapwrap" style="position: relative;">
+            <div id="map"></div>
+            <div id="turnPanel" style="position:absolute; bottom:10px; right:10px; z-index:1000; background:#071018; border:1px solid #1e3640; border-radius:8px; padding:14px; max-width:240px; max-height:200px; overflow-y:auto; display:none; color:#cfe8d6; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
+                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e3640; padding-bottom:6px; margin-bottom:8px;">
+                    <span style="font-size:13px; font-weight:bold; color:#00bcd4;">🔀 Directions</span>
+                    <span onclick="document.getElementById('turnPanel').style.display='none'" style="cursor:pointer; color:#8a9fa0; font-size:14px; font-weight:bold;">&times;</span>
+                </div>
+                <div id="turnSteps" style="font-size:13px;"></div>
+            </div>
+        </div>
+
+        <div id="rightpanel">
+            <div class="mobile-drawer-header">
+                <span class="drawer-title">📡 Nodes & Operations</span>
+                <button class="drawer-close-btn" onclick="closeMobilePanels()">✕ Close</button>
+            </div>
+            <div class="operator-only" style="display: flex; gap: 8px;">
+                <button class="btn btn-red" style="flex: 1; height: 34px;" onclick="triggerEmergency()">🚨 MANUAL EMERGENCY</button>
+                <button class="btn btn-gray" style="flex: 1; height: 34px;" onclick="clearEmergency()">✓ CLEAR</button>
+            </div>
+
+            <!-- Operator: Live Statistics -->
+            <div class="card operator-only" id="statsCard">
+                <h3>📊 Live Statistics</h3>
+                <div class="sensor-row">
+                    <span class="sensor-label">Connected Now</span>
+                    <span class="sensor-value" id="connectedNow" style="color: #00bcd4; font-size: 16px;">0</span>
+                </div>
+                <div class="sensor-row">
+                    <span class="sensor-label">Total Connections (Session)</span>
+                    <span class="sensor-value" id="totalConns">0</span>
+                </div>
+                <div class="sensor-row">
+                    <span class="sensor-label">Reports Received</span>
+                    <span class="sensor-value" id="reportsCount">0</span>
+                </div>
+                <div class="sensor-row">
+                    <span class="sensor-label">Sensor Alerts</span>
+                    <span class="sensor-value" id="alertsCount">0</span>
+                </div>
+                <div style="margin-top: 12px;">
+                    <select id="statsRange" onchange="loadStats()" style="width: 100%;">
+                        <option value="1">Last 1 Hour</option>
+                        <option value="6">Last 6 Hours</option>
+                        <option value="24" selected>Last 24 Hours</option>
+                        <option value="168">Last 7 Days</option>
+                        <option value="720">Last 30 Days</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Operator: Reports Inbox -->
+            <div class="card operator-only" id="reportsCard">
+                <h3>📋 Public Reports Inbox</h3>
+                <div id="reportsInbox" style="max-height: 250px; overflow-y: auto; font-size: 13px;">
+                    <div style="color: #666; text-align: center; padding: 10px;">Loading reports...</div>
+                </div>
+            </div>
+
+            <!-- Operator: System Health -->
+            <div class="card operator-only" id="system_health_card">
+                <h3>System Health</h3>
+                <div class="sensor-row">
+                    <span class="sensor-label">Socket Server</span>
+                    <span class="sensor-value" id="socketStatus">Connecting... <span class="sensor-status status-warning"></span></span>
+                </div>
+                <div class="sensor-row">
+                    <span class="sensor-label">AI Engine</span>
+                    <span class="sensor-value">Active <span class="sensor-status status-ok"></span></span>
+                </div>
+                <hr style="border: 0; border-top: 1px solid #1e3640; margin: 10px 0;">
+                <div class="sensor-row" style="align-items: center; justify-content: flex-start; gap: 8px;">
+                    <input type="checkbox" id="toggleServices" onchange="toggleEmergencyServicesOverlay(this.checked)" style="accent-color: #00bcd4; width: 14px; height: 14px; cursor: pointer;">
+                    <label for="toggleServices" style="color: #cfe8d6; font-size: 13px; cursor: pointer; user-select: none;">🌐 Show Emergency Services (Blue Dots)</label>
+                </div>
+            </div>
+
+            <!-- PUBLIC: Information & Quick Assessment -->
+            <div class="public-only" id="publicInfoPanel">
+                <div class="card">
+                    <h3>ℹ️ How This Dashboard Works</h3>
+                    <div style="font-size: 13px; color: #8a9fa0; line-height: 1.6;">
+                        <p style="margin-bottom: 8px;">This is a <strong style="color: #00ff66;">real-time disaster monitoring dashboard</strong> powered by VERS (Village Emergency Response System).</p>
+                        <div style="margin-bottom: 6px;"><span style="color: #ff5050;">●</span> <strong style="color: #cfe8d6;">Red zones</strong> = Severe flooding / Red rainfall warning</div>
+                        <div style="margin-bottom: 6px;"><span style="color: #fa0;">●</span> <strong style="color: #cfe8d6;">Orange zones</strong> = Threatening floods / Orange warning</div>
+                        <div style="margin-bottom: 6px;"><span style="color: #00ff66;">●</span> <strong style="color: #cfe8d6;">Yellow zones</strong> = Possible flooding / Yellow warning</div>
+                        <div style="margin-bottom: 6px;">🌀 <strong style="color: #cfe8d6;">Spinning icons</strong> = Active cyclones/storms tracked by GDACS</div>
+                        <div style="margin-bottom: 6px;">🌧️ <strong style="color: #cfe8d6;">Rain Radar</strong> = Toggle via map layers (top-right of map)</div>
+                        <div>🖱️ <strong style="color: #cfe8d6;">Hover the map</strong> to see live precipitation (mm/h) at any point</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 12px;">
+                    <h3>🎯 Quick Hazard Assessment</h3>
+                    <p style="font-size: 13px; color: #8a9fa0; margin-bottom: 10px;">Check the current risk level at your exact location</p>
+                    <button onclick="runHazardAssessment()" id="hazardAssessBtn" class="btn btn-cyan" style="width: 100%;">📍 Assess My Location Now</button>
+                    <div id="hazardResults" style="margin-top: 12px; display: none;"></div>
+                </div>
+
+                <div class="card" style="margin-top: 12px;">
+                    <h3>📢 Report a Disaster</h3>
+                    <p style="font-size: 13px; color: #8a9fa0; margin-bottom: 10px;">See something dangerous? Help your community by reporting it with photo evidence and GPS location.</p>
+                    <a href="/report" style="display: block; width: 100%; padding: 12px; background: #00ff66; color: #000; border: none; border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer; text-align: center; text-decoration: none; box-sizing: border-box;">📸 Submit Incident Report</a>
+                </div>
+            </div>
+
+            <!-- Node cards injected here -->
+        </div>
+    </div>
+
+    <!-- Mobile Menu Drawer (Slide-up) -->
+    <div id="mobileMenuDrawer">
+        <div class="mobile-drawer-header">
+            <span class="drawer-title">☰ Navigation & Tools</span>
+            <button class="drawer-close-btn" onclick="closeMobilePanels()">✕ Close</button>
+        </div>
+        <div class="card" style="margin-bottom:10px;">
+            <h3>Public Tools</h3>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+                <a href="/report" class="btn btn-cyan" style="width:100%; text-align:center;">📢 Report Incident</a>
+                <button onclick="closeMobilePanels(); toggleHazardHunter();" class="btn btn-green" style="width:100%;">🎯 Hazard Assessment</button>
+            </div>
+        </div>
+        <div class="card operator-only" style="margin-bottom:10px;">
+            <h3>Operator Controls</h3>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+                <button onclick="closeMobilePanels(); openSettings();" class="btn btn-gray" style="width:100%;">⚙️ System Settings</button>
+                <button onclick="closeMobilePanels(); togglePlaybackMode();" class="btn btn-orange" style="width:100%;">⏮ Playback Mode</button>
+                <button onclick="testVoice()" class="btn btn-gray" style="width:100%;">🔊 Test Voice</button>
+                <button onclick="requestGPS()" class="btn btn-cyan" style="width:100%;">🛰️ Request GPS from Nodes</button>
+                <a href="/logout" class="btn btn-red" style="width:100%; text-align:center;">🔓 Logout</a>
+            </div>
+        </div>
+        <div class="public-only" style="margin-top:6px;">
+            <a href="/login" class="btn btn-orange" style="width:100%; text-align:center;">🔐 Operator Login</a>
+        </div>
+    </div>
+
+    <!-- Mobile Drawer Backdrop -->
+    <div id="mobileDrawerBackdrop" class="mobile-drawer-backdrop" onclick="closeMobilePanels()"></div>
+
+    <!-- Mobile App Bottom Navigation Bar -->
+    <div id="mobileBottomNav" class="mobile-bottom-nav">
+        <button class="mobile-nav-btn" onclick="openMobilePanel('leftpanel')" id="mobNavAlerts">
+            <span class="nav-icon">🚨</span>
+            <span class="nav-label">Alerts</span>
+            <span id="mobileAlertBadge" class="nav-badge" style="display:none;">0</span>
+        </button>
+        <button class="mobile-nav-btn" onclick="openMobilePanel('rightpanel')" id="mobNavNodes">
+            <span class="nav-icon">📡</span>
+            <span class="nav-label">Nodes</span>
+        </button>
+        <button class="mobile-nav-btn btn-highlight" onclick="closeMobilePanels(); toggleHazardHunter();" id="mobNavHazard">
+            <span class="nav-icon">🎯</span>
+            <span class="nav-label">Hazard</span>
+        </button>
+        <a href="/report" class="mobile-nav-btn" id="mobNavReport">
+            <span class="nav-icon">📢</span>
+            <span class="nav-label">Report</span>
+        </a>
+        <button class="mobile-nav-btn" onclick="openMobilePanel('mobileMenuDrawer')" id="mobNavMenu">
+            <span class="nav-icon">☰</span>
+            <span class="nav-label">Menu</span>
+        </button>
+    </div>
+
+    <!-- Settings Modal (Operator Only) -->
+    <div id="settingsModal" class="settings-modal">
+        <div class="settings-content" style="max-width:520px; padding:0; overflow:hidden;">
+            <!-- Header -->
+            <div style="background:#071018; border-bottom:2px solid #00ff66; padding:18px 24px; display:flex; align-items:center; justify-content:space-between;">
+                <h2 style="margin:0; font-size:16px; letter-spacing:1px; text-transform:uppercase; color:#fff;">⚙️ System Settings</h2>
+                <button onclick="closeSettings()" style="background:none; border:none; color:#8a9fa0; font-size:20px; cursor:pointer; line-height:1;">✕</button>
+            </div>
+
+            <!-- Tab Bar -->
+            <div id="settingsTabs" style="display:flex; background:#0b1820; border-bottom:1px solid #1e3640;">
+                <button class="stab active" onclick="switchTab('tab-email')" id="stab-email">📧 Email / SMTP</button>
+                <button class="stab" onclick="switchTab('tab-display')" id="stab-display">🗺️ Display</button>
+                <button class="stab" onclick="switchTab('tab-backup')" id="stab-backup">💾 Backup</button>
+                <button class="stab" onclick="switchTab('tab-sim')" id="stab-sim">🧪 Simulator</button>
+                <button class="stab" onclick="switchTab('tab-thresholds')" id="stab-thresholds">⚙️ Thresholds</button>
+                <button class="stab" onclick="switchTab('tab-analytics')" id="stab-analytics">📊 Analytics</button>
+            </div>
+
+            <!-- Tab: Email -->
+            <div id="tab-email" class="stab-panel" style="padding:22px 24px; display:block;">
+                <p style="margin:0 0 16px; font-size:12px; color:#8a9fa0;">Changes are saved persistently to <code style="color:#00ff66;">data/settings.json</code> and survive restarts.</p>
+                <div class="setting-item">
+                    <label>SMTP Server</label>
+                    <input type="text" id="cfg_smtp_server" placeholder="smtp.gmail.com">
+                </div>
+                <div class="setting-item">
+                    <label>SMTP Port</label>
+                    <input type="number" id="cfg_smtp_port" placeholder="587">
+                </div>
+                <div class="setting-item">
+                    <label>Sender Email</label>
+                    <input type="email" id="cfg_sender_email" placeholder="you@gmail.com">
+                </div>
+                <div class="setting-item">
+                    <label>App Password <span style="font-size:12px; color:#8a9fa0;">(leave blank to keep current)</span></label>
+                    <input type="password" id="cfg_sender_password" placeholder="●●●●●●●●●●●●●●●●" autocomplete="new-password">
+                </div>
+                <div class="setting-item">
+                    <label>Recipient Email</label>
+                    <input type="email" id="cfg_recipient_email" placeholder="alerts@example.com">
+                </div>
+                <div class="setting-item">
+                    <label>Dashboard Password <span style="font-size:12px; color:#8a9fa0;">(leave blank to keep current)</span></label>
+                    <input type="password" id="cfg_dashboard_password" placeholder="●●●●●●●●●●●●●●●●" autocomplete="new-password">
+                </div>
+                <div style="margin-top:16px; padding-top:14px; border-top:1px solid #1e3640;">
+                    <div style="color:#00bcd4; font-size:13px; font-weight:bold; margin-bottom:8px; text-transform:uppercase;">📱 Facebook Page Auto-Monitoring</div>
+                    <div class="setting-item">
+                        <label>Monitored FB Page Handle / Username</label>
+                        <input type="text" id="cfg_fb_page_handle" placeholder="IloveTaguig" value="IloveTaguig">
+                        <span style="font-size:12px; color:#8a9fa0; margin-top:4px;">Auto-polls official LGU Facebook posts for class suspensions & "Walang Pasok" bulletins.</span>
+                    </div>
+                </div>
+                <div id="settingsSaveMsg" style="display:none; font-size:12px; margin-top:8px; padding:8px 12px; border-radius:4px;"></div>
+                <div class="button-group" style="margin-top:20px;">
+                    <button class="btn btn-gray" onclick="closeSettings()">Cancel</button>
+                    <button class="btn btn-green" onclick="saveSettings()">💾 Save Settings</button>
+                </div>
+            </div>
+
+            <!-- Tab: Display -->
+            <div id="tab-display" class="stab-panel" style="padding:22px 24px; display:none;">
+                <p style="margin:0 0 16px; font-size:12px; color:#8a9fa0;">Map and UI display preferences.</p>
+                <div class="setting-item" style="flex-direction:row; align-items:center; gap:12px;">
+                    <input type="checkbox" id="chk_services" style="width:16px; height:16px; accent-color:#00ff66;" checked>
+                    <label for="chk_services" style="cursor:pointer; margin:0;">Show Emergency Services (blue dots)</label>
+                </div>
+                <div class="setting-item" style="flex-direction:row; align-items:center; gap:12px;">
+                    <input type="checkbox" id="chk_safe_zones" style="width:16px; height:16px; accent-color:#00ff66;" checked>
+                    <label for="chk_safe_zones" style="cursor:pointer; margin:0;">Show Safe Zones (green circles)</label>
+                </div>
+                <div class="setting-item" style="flex-direction:row; align-items:center; gap:12px;">
+                    <input type="checkbox" id="chk_voice" style="width:16px; height:16px; accent-color:#00ff66;" checked>
+                    <label for="chk_voice" style="cursor:pointer; margin:0;">Enable Voice Announcements (TTS)</label>
+                </div>
+                <div class="button-group" style="margin-top:20px;">
+                    <button class="btn btn-gray" onclick="closeSettings()">Close</button>
+                    <button class="btn btn-green" onclick="applyDisplaySettings()">✅ Apply</button>
+                </div>
+            </div>
+
+            <!-- Tab: Backup -->
+            <div id="tab-backup" class="stab-panel" style="padding:22px 24px; display:none;">
+                <p style="margin:0 0 16px; font-size:12px; color:#8a9fa0;">Send a full copy of all system Python scripts to the configured recipient email as attachments.</p>
+                <div style="background:#071018; border:1px solid #1e3640; border-radius:6px; padding:16px; margin-bottom:20px;">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                        <span style="color:#8a9fa0; font-size:12px;">Includes:</span>
+                    </div>
+                    <div style="font-family:monospace; font-size:13px; color:#00bcd4;">📄 vers_system.py</div>
+                    <div style="font-family:monospace; font-size:13px; color:#00bcd4;">📄 vers_simulator.py</div>
+                </div>
+                <div id="backupMsg" style="display:none; font-size:12px; margin-bottom:12px; padding:8px 12px; border-radius:4px;"></div>
+                <div class="button-group" style="flex-wrap: wrap; margin-top:20px;">
+                    <button class="btn btn-gray" onclick="closeSettings()">Close</button>
+                    <button class="btn btn-green" onclick="window.location.href='/api/backup/download'">📥 Download ZIP</button>
+                    <button id="backupBtn" class="btn btn-cyan" onclick="backupSystemCode()">📤 Email Backup</button>
+                </div>
+            </div>
+
+            <!-- Tab: Simulator -->
+            <div id="tab-sim" class="stab-panel" style="padding:22px 24px; display:none;">
+                <p style="margin:0 0 16px; font-size:12px; color:#8a9fa0;">Inject synthetic sensor data into the system for testing and training.</p>
+                <div class="setting-item">
+                    <label>Target Node</label>
+                    <select id="sim2_device">
+                        <option value="">-- Select --</option>
+                        <option value="Node_01">Node_01</option>
+                        <option value="Node_02">Node_02</option>
+                        <option value="Node_03">Node_03</option>
+                        <option value="V-Node_01">V-Node_01</option>
+                        <option value="V-Node_02">V-Node_02</option>
+                        <option value="V-Node_03">V-Node_03</option>
+                        <option value="V-Node_04">V-Node_04</option>
+                        <option value="V-Node_05">V-Node_05</option>
+                        <option value="V-Node_06">V-Node_06</option>
+                        <option value="V-Node_07">V-Node_07</option>
+                        <option value="V-Node_08">V-Node_08</option>
+                        <option value="V-Node_09">V-Node_09</option>
+                        <option value="V-Node_10">V-Node_10</option>
+                    </select>
+                </div>
+                <div class="setting-item">
+                    <label>Life Form Detection</label>
+                    <select id="sim2_life_form">
+                        <option value="0">0 — Clear</option>
+                        <option value="1">1 — Detected</option>
+                    </select>
+                </div>
+                <div class="setting-item">
+                    <label>Flood Sensor</label>
+                    <select id="sim2_flood">
+                        <option value="0">0 — Dry</option>
+                        <option value="1">1 — Water Detected</option>
+                    </select>
+                </div>
+                <div class="setting-item">
+                    <label>Fire Sensor</label>
+                    <select id="sim2_fire">
+                        <option value="0">0 — Clear</option>
+                        <option value="1">1 — Fire Detected</option>
+                    </select>
+                </div>
+                <div class="setting-item">
+                    <label>Gas Level — <span id="sim2_gas_val">100</span> ppm</label>
+                    <input type="range" id="sim2_gas" min="0" max="500" value="100" oninput="document.getElementById('sim2_gas_val').textContent=this.value" style="accent-color:#fa0;">
+                </div>
+                <div class="setting-item">
+                    <label>Battery Level — <span id="sim2_battery_val">80</span>%</label>
+                    <input type="range" id="sim2_battery" min="0" max="100" value="80" oninput="document.getElementById('sim2_battery_val').textContent=this.value" style="accent-color:#0f6;">
+                </div>
+                <div class="setting-item">
+                    <label>Latitude</label>
+                    <input type="number" id="sim2_lat" step="0.0001" value="14.4681">
+                </div>
+                <div class="setting-item">
+                    <label>Longitude</label>
+                    <input type="number" id="sim2_lon" step="0.0001" value="121.0552">
+                </div>
+                <div class="button-group" style="margin-top:20px;">
+                    <button class="btn btn-gray" onclick="closeSettings()">Cancel</button>
+                    <button class="btn btn-purple" onclick="sendSimulatedData()">🚀 Send Simulation</button>
+                </div>
+            </div>
+
+            <!-- Tab: Thresholds -->
+            <div id="tab-thresholds" class="stab-panel" style="padding:22px 24px; display:none;">
+                <p style="margin:0 0 16px; font-size:12px; color:#8a9fa0;">Configure custom alert thresholds for each monitoring node.</p>
+                <div class="setting-item">
+                    <label>Gas Threshold (PPM)</label>
+                    <input type="number" id="th_gas_global" value="200" style="width: 100%; padding: 8px;">
+                </div>
+                <div class="setting-item" style="flex-direction:row; align-items:center; gap:12px;">
+                    <input type="checkbox" id="th_flood_global" style="width:16px; height:16px; accent-color:#00ff66;" checked>
+                    <label for="th_flood_global" style="cursor:pointer; margin:0;">Enable Flood Alerts</label>
+                </div>
+                <div class="setting-item" style="flex-direction:row; align-items:center; gap:12px;">
+                    <input type="checkbox" id="th_fire_global" style="width:16px; height:16px; accent-color:#00ff66;" checked>
+                    <label for="th_fire_global" style="cursor:pointer; margin:0;">Enable Fire Alerts</label>
+                </div>
+                <div style="border-top:1px solid #1e3640; margin-top:16px; padding-top:16px;">
+                    <label style="color:#00bcd4; font-size:13px; font-weight:bold; text-transform:uppercase; letter-spacing:1px;">📷 Node Camera IPs</label>
+                    <div id="cam_ips_config_list" style="margin-top:10px; max-height:160px; overflow-y:auto; padding-right:6px;"></div>
+                </div>
+                <div class="button-group" style="margin-top:20px;">
+                    <button class="btn btn-gray" onclick="closeSettings()">Close</button>
+                    <button class="btn btn-green" onclick="saveThresholdSettings()">💾 Save Thresholds</button>
+                </div>
+            </div>
+
+            <!-- Tab: Analytics -->
+            <div id="tab-analytics" class="stab-panel" style="padding:22px 24px; display:none;">
+                <p style="margin:0 0 16px; font-size:12px; color:#8a9fa0;">Generate historical risk heatmaps for analytical review.</p>
+                <div class="setting-item">
+                    <label>Time Range</label>
+                    <select id="analytics_hours">
+                        <option value="1">Last 1 Hour</option>
+                        <option value="6">Last 6 Hours</option>
+                        <option value="24">Last 24 Hours</option>
+                        <option value="168">Last 7 Days</option>
+                    </select>
+                </div>
+                <div id="analytics_summary" style="background:#0b1820; border:1px solid #1e3640; border-radius:6px; padding:12px; margin-bottom:16px; font-size:13px; display:none;">
+                    <div style="color:#00bcd4; margin-bottom:4px; font-weight:bold;">Heatmap Summary</div>
+                    <div>Total Incidents: <span id="asum_total" style="color:#0f6;">0</span></div>
+                    <div>Highest Risk Device: <span id="asum_device" style="color:#0f6;">-</span></div>
+                    <div>Most Active Zone: <span id="asum_zone" style="color:#0f6;">-</span></div>
+                </div>
+                <div class="button-group" style="margin-top:20px;">
+                    <button class="btn btn-gray" onclick="closeSettings()">Close</button>
+                    <button class="btn btn-cyan" onclick="generateAnalyticsHeatmap()">📊 Generate Heatmap</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    
+    <script>
+        window.OWM_API_KEY = "__OWM_API_KEY__";
+        // Role-based UI initialization
+        const IS_OPERATOR = __IS_OPERATOR__;
+        document.addEventListener('DOMContentLoaded', function() {
+            const opElements = document.querySelectorAll('.operator-only');
+            const pubElements = document.querySelectorAll('.public-only');
+            const opControls = document.getElementById('operatorControls');
+            const loginBtn = document.getElementById('loginBtn');
+            const mobileLoginBtn = document.getElementById('mobileLoginBtn');
+            
+            if (IS_OPERATOR) {
+                opElements.forEach(el => {
+                    el.style.display = (el.classList.contains('operator-only-flex') ? 'flex' : 'block');
+                });
+                pubElements.forEach(el => el.style.display = 'none');
+                if (opControls) opControls.style.display = 'inline-flex';
+                if (loginBtn) loginBtn.style.display = 'none';
+                if (mobileLoginBtn) mobileLoginBtn.style.display = 'none';
+                loadStats();
+            } else {
+                opElements.forEach(el => el.style.display = 'none');
+                pubElements.forEach(el => el.style.display = '');
+                if (opControls) opControls.style.display = 'none';
+                if (loginBtn) loginBtn.style.display = 'inline-flex';
+            }
+        });
+        
+        // Operator: Load statistics
+        function loadStats() {
+            const hours = document.getElementById('statsRange') ? document.getElementById('statsRange').value : 24;
+            fetch(`/api/stats?hours=${hours}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'ok') {
+                        document.getElementById('connectedNow').textContent = data.connected_now;
+                        document.getElementById('totalConns').textContent = data.total_connections;
+                        document.getElementById('reportsCount').textContent = data.reports_count;
+                        document.getElementById('alertsCount').textContent = data.alerts_count;
+                        renderReportsInbox(data.reports || []);
+                    }
+                }).catch(() => {});
+        }
+        
+        // Operator: Render reports inbox
+        function renderReportsInbox(reports) {
+            const inbox = document.getElementById('reportsInbox');
+            if (!inbox) return;
+            if (reports.length === 0) {
+                inbox.innerHTML = '<div style="color: #666; text-align: center; padding: 10px;">No reports yet</div>';
+                return;
+            }
+            inbox.innerHTML = reports.map(r => {
+                const typeColors = {'Flood': '#00bcd4', 'Fire': '#ff5050', 'Landslide': '#fa0', 'Earthquake Damage': '#ff5050', 'Road Blocked': '#fa0', 'Stranded Persons': '#ff5050'};
+                const color = typeColors[r.report_type] || '#8a9fa0';
+                const imgTag = r.image_path ? `<a href="${r.image_path}" target="_blank" style="color: #00bcd4; font-size: 12px;">📷 View Photo</a>` : '';
+                const locLink = (r.lat && r.lon && r.lat !== 0) ? `<a href="https://www.google.com/maps?q=${r.lat},${r.lon}" target="_blank" style="color: #00bcd4; font-size: 12px;">📍 Map</a>` : '';
+                const fwdText = `VERS ALERT: ${r.report_type} reported at ${r.timestamp}. ${r.description}. Location: https://www.google.com/maps?q=${r.lat},${r.lon}`;
+                const fwdLink = `sms:?body=${encodeURIComponent(fwdText)}`;
+                return `<div style="padding: 8px; margin-bottom: 6px; border-radius: 4px; background: rgba(30,54,64,0.3); border-left: 3px solid ${color};">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <strong style="color: ${color};">${r.report_type}</strong>
+                        <span style="font-size: 9px; color: #666;">#${r.id}</span>
+                    </div>
+                    <div style="color: #cfe8d6; margin: 4px 0;">${r.description.substring(0, 120)}${r.description.length > 120 ? '...' : ''}</div>
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        ${imgTag} ${locLink}
+                        <a href="${fwdLink}" style="color: #00ff66; font-size: 12px; font-weight: bold;">📲 Forward via SMS</a>
+                        <span style="font-size: 9px; color: #666; margin-left: auto;">${r.reporter_name || 'Anonymous'} · ${new Date(r.timestamp).toLocaleString()}</span>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+        
+        // Public: Quick hazard assessment
+        function runHazardAssessment() {
+            const btn = document.getElementById('hazardAssessBtn');
+            const results = document.getElementById('hazardResults');
+            btn.textContent = '⏳ Getting your location...';
+            btn.disabled = true;
+            
+            if (!navigator.geolocation) {
+                results.style.display = 'block';
+                results.innerHTML = '<div style="color: #ff5050; font-size: 12px;">GPS not supported on this device</div>';
+                btn.textContent = '📍 Assess My Location Now';
+                btn.disabled = false;
+                return;
+            }
+            
+            navigator.geolocation.getCurrentPosition(pos => {
+                btn.textContent = '⏳ Analyzing hazards...';
+                fetch(`/api/hazard-assessment?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        results.style.display = 'block';
+                        if (data.hazards && data.hazards.length > 0) {
+                            const levelColors = {'Red': '#ff5050', 'Orange': '#fa0', 'Yellow': '#ffeb3b', 'High': '#ff5050', 'Moderate': '#fa0', 'Green': '#00ff66', 'Unknown': '#8a9fa0'};
+                            results.innerHTML = `<div style="font-size: 13px; color: #8a9fa0; margin-bottom: 8px;">📍 ${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}</div>` +
+                                data.hazards.map(h => {
+                                    const c = levelColors[h.level] || '#8a9fa0';
+                                    return `<div style="padding: 8px; margin-bottom: 6px; border-radius: 4px; background: rgba(30,54,64,0.4); border-left: 3px solid ${c};">
+                                        <div style="font-size: 12px;"><strong style="color: ${c};">${h.type}</strong> — <span style="color: ${c};">${h.level}</span></div>
+                                        <div style="font-size: 12px; color: #8a9fa0; margin-top: 2px;">${h.area}</div>
+                                        <div style="font-size: 12px; color: #cfe8d6; margin-top: 2px;">${h.description}</div>
+                                    </div>`;
+                                }).join('');
+                        } else {
+                            results.innerHTML = '<div style="padding: 10px; background: rgba(0,255,102,0.08); border: 1px solid #00ff66; border-radius: 6px; text-align: center;"><div style="font-size: 20px; margin-bottom: 4px;">✅</div><div style="color: #00ff66; font-size: 12px; font-weight: bold;">No Active Hazards Detected</div><div style="color: #8a9fa0; font-size: 12px; margin-top: 4px;">Your area appears clear. Stay alert and monitor updates.</div></div>';
+                        }
+                        btn.textContent = '🔄 Re-assess My Location';
+                        btn.disabled = false;
+                    }).catch(() => {
+                        results.innerHTML = '<div style="color: #ff5050; font-size: 12px;">Error fetching hazard data</div>';
+                        btn.textContent = '📍 Assess My Location Now';
+                        btn.disabled = false;
+                    });
+            }, err => {
+                results.style.display = 'block';
+                results.innerHTML = '<div style="color: #ff5050; font-size: 12px;">❌ Could not get location. Please allow GPS access.</div>';
+                btn.textContent = '📍 Assess My Location Now';
+                btn.disabled = false;
+            }, { enableHighAccuracy: true, timeout: 10000 });
+        }
+        
+        // Auto-refresh operator stats
+        if (IS_OPERATOR) {
+            setInterval(loadStats, 30000);
+        }
+    </script>
+    <script src="/static/app.js"></script>
+</body>
+</html>
+

@@ -1,0 +1,49 @@
+# Python Virtual Environments
+venv/
+env/
+.venv/
+ENV/
+
+# Python Bytecode and Caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Sensitive Configuration and Database Files
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/settings.json
+data/*.log
+data/audit.log
+data/backup_error.txt
+data/*.csv
+data/sensor_records.csv
+
+# Environment Variables & Secrets
+.env
+.env.*
+*.key
+*.pem
+
+# Uploaded Files & Temporary Backups
+static/uploads/*
+!static/uploads/.gitkeep
+static/*.zip
+*.zip
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# IDE & Editor Settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

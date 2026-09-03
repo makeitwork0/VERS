@@ -1,0 +1,17 @@
+[Unit]
+Description=VERS Sensor Simulator
+After=network.target vers.service
+
+[Service]
+Type=simple
+User=rasp-pi
+WorkingDirectory=/home/rasp-pi/vers_project
+ExecStart=/home/rasp-pi/vers_project/venv/bin/python -u vers_simulator.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
