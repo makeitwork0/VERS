@@ -688,16 +688,16 @@ const OWM_API_KEY = "__OWM_API_KEY__";
 
             const emojiMap = { 'Flood': '🌊', 'Fire': '🔥', 'Landslide': '⛰️', 'Earthquake Damage': '🏚️', 'Road Blocked': '🚧', 'Other': '❓' };
             function renderPublicReport(report) {
-                const emoji = emojiMap[report.type] || '❓';
+                const emoji = emojiMap[report.report_type] || '❓';
                 const icon = L.divIcon({ html: `<div style="font-size: 20px;">${emoji}</div>`, className: 'public-report-icon', iconSize: [24, 24] });
                 const marker = L.marker([report.lat, report.lon], { icon }).addTo(publicReportsLayer);
-                marker.bindPopup(`<b>${emoji} ${report.type}</b> <span style="background:red;color:white;padding:2px 4px;border-radius:3px;font-size:12px;">UNVERIFIED</span><br><b>Desc:</b> ${report.description}<br><b>Reporter:</b> ${report.reporter_name}<br><b>Time:</b> ${new Date(report.timestamp).toLocaleString()}`);
+                marker.bindPopup(`<b>${emoji} ${report.report_type}</b> <span style="background:red;color:white;padding:2px 4px;border-radius:3px;font-size:12px;">UNVERIFIED</span><br><b>Desc:</b> ${report.description}<br><b>Reporter:</b> ${report.reporter_name}<br><b>Time:</b> ${new Date(report.timestamp).toLocaleString()}`);
             }
 
             function fetchPublicReports() {
                 publicReportsLayer.clearLayers();
                 fetch('/api/reports').then(res => res.json()).then(data => {
-                    if (Array.isArray(data)) data.forEach(renderPublicReport);
+                    if (data && Array.isArray(data.data)) data.data.forEach(renderPublicReport);
                 }).catch(e => console.warn('No public reports found'));
             }
             fetchPublicReports();
@@ -705,7 +705,7 @@ const OWM_API_KEY = "__OWM_API_KEY__";
             
             socket.on('new_public_report', (data) => {
                 renderPublicReport(data);
-                showToast(`New Public Report: ${data.type}`);
+                showToast(`New Public Report: ${data.report_type}`);
             });
 
             // --- HazardHunterPH Feature ---
@@ -864,8 +864,8 @@ const OWM_API_KEY = "__OWM_API_KEY__";
             fetch('/api/geofences')
                 .then(res => res.json())
                 .then(data => {
-                    if (Array.isArray(data)) {
-                        data.forEach(gf => {
+                    if (data && Array.isArray(data.data)) {
+                        data.data.forEach(gf => {
                             const polygon = L.polygon(gf.coordinates, { color: 'red', fillColor: 'red', fillOpacity: 0.2 });
                             polygon.bindTooltip(gf.name);
                             polygon.geofenceId = gf.id;
@@ -1883,7 +1883,7 @@ const OWM_API_KEY = "__OWM_API_KEY__";
                 statusBadge.style.background = '#fa0';
                 statusBadge.style.color = '#000';
                 
-                fetch('/api/history')
+                fetch('/api/history?limit=1500')
                     .then(res => res.json())
                     .then(data => {
                         playbackLogs = data;
@@ -1924,7 +1924,8 @@ const OWM_API_KEY = "__OWM_API_KEY__";
             const ts = log.timestamp;
             
             const logTime = new Date(ts);
-            document.getElementById('playbackTime').textContent = logTime.toLocaleTimeString() + ' (' + (index + 1) + '/' + playbackLogs.length + ')';
+            const timeStr = logTime.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + logTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            document.getElementById('playbackTime').textContent = timeStr + ' (' + (index + 1) + '/' + playbackLogs.length + ')';
             
             updateDeviceDisplay(log.device_id, payload);
             addOrUpdateMarker(log.device_id, payload.lat, payload.lon, payload);

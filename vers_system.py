@@ -62,7 +62,11 @@ last_alert_time = {}
 # APP & SOCKETIO
 # =========================
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "vers-super-secret-key-123")
+# Session-signing key is resolved securely (env var, then a persisted random value)
+# further down via _ensure_flask_secret(); this placeholder is overwritten before
+# the server ever starts accepting requests.
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
+app.config['MAX_CONTENT_LENGTH'] = 12 * 1024 * 1024  # 12MB cap on any single request body (uploads, etc.)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # =========================
@@ -100,18 +104,25 @@ VERS Critical Infrastructure Handbook (v2.4)
 # =========================
 # EMAIL/SMTP CONFIGURATION
 # =========================
+# NOTE: no real credentials belong here as fallback literals — this file is committed to a
+# public repo. Unset values fall back to a harmless sentinel that the "is SMTP configured?"
+# checks below already treat as "not configured", instead of a working password.
 SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "erosrohantorres@gmail.com")
-SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD", "cfrdfizrjjnzsdwa").replace(" ", "")
+SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD", "your_16char_app_password").replace(" ", "")
 RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL", "erosrohantorres@gmail.com")
 
 SETTINGS_PATH = "data/settings.json"
 AUDIT_LOG_PATH = "data/audit.log"
 
-DASHBOARD_PASSWORD = "vers2024"
+# Publicly-known placeholder — _ensure_dashboard_password() below rotates the live
+# password to a random value on startup if it's still ever equal to this.
+LEAKED_DEFAULT_DASHBOARD_PASSWORD = "vers2024"
+DASHBOARD_PASSWORD = LEAKED_DEFAULT_DASHBOARD_PASSWORD
 API_KEY = ""
 OWM_API_KEY = ""
+FLASK_SECRET_KEY = None
 
 FB_PAGE_HANDLE = "IloveTaguig"
 FB_ACCESS_TOKEN = ""
@@ -159,6 +170,62 @@ def _ensure_api_key():
     except Exception as e:
         print(f"[CONFIG] Could not persist API key: {e}")
 
+def _read_settings_file():
+    if os.path.exists(SETTINGS_PATH):
+        try:
+            with open(SETTINGS_PATH, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def _write_settings_file(data):
+    os.makedirs("data", exist_ok=True)
+    try:
+        with open(SETTINGS_PATH, "w") as f:
+            json.dump(data, f, indent=4)
+        return True
+    except Exception as e:
+        print(f"[CONFIG] Could not persist settings.json: {e}")
+        return False
+
+def _ensure_flask_secret():
+    """Ensures the Flask session-signing secret is a securely generated value, not the
+    hardcoded literal that used to live in source (which would let anyone forge a
+    logged-in session cookie for this public repo's codebase). Persists it so sessions
+    survive restarts, unless FLASK_SECRET_KEY is set in the environment."""
+    global FLASK_SECRET_KEY
+    env_secret = os.environ.get("FLASK_SECRET_KEY")
+    if env_secret:
+        FLASK_SECRET_KEY = env_secret
+        return
+    existing = _read_settings_file()
+    key = existing.get("flask_secret_key")
+    if not key:
+        key = secrets.token_hex(32)
+        existing["flask_secret_key"] = key
+        if _write_settings_file(existing):
+            print("[SECURITY] Generated and persisted a new Flask session-signing secret.")
+    FLASK_SECRET_KEY = key
+
+def _ensure_dashboard_password():
+    """Rotates DASHBOARD_PASSWORD off the publicly-known default it used to hardcode.
+    Runs after load_settings(), so this only fires if the *effective* password
+    (env/settings-file included) still resolves to the leaked literal."""
+    global DASHBOARD_PASSWORD
+    if DASHBOARD_PASSWORD != LEAKED_DEFAULT_DASHBOARD_PASSWORD:
+        return
+    new_password = secrets.token_urlsafe(9)
+    DASHBOARD_PASSWORD = new_password
+    existing = _read_settings_file()
+    existing["dashboard_password"] = new_password
+    _write_settings_file(existing)
+    print("=" * 70)
+    print("[SECURITY] Operator dashboard password was the known public default.")
+    print(f"[SECURITY] Rotated automatically. New password: {new_password}")
+    print("[SECURITY] Change it anytime via Settings > Email/SMTP tab.")
+    print("=" * 70)
+
 def save_settings_to_file(smtp_server, smtp_port, sender_email, sender_password, recipient_email, dashboard_password=None, owm_api_key=None, fb_page_handle=None, fb_access_token=None):
     global DASHBOARD_PASSWORD, OWM_API_KEY, FB_PAGE_HANDLE, FB_ACCESS_TOKEN
     if dashboard_password is not None:
@@ -182,7 +249,8 @@ def save_settings_to_file(smtp_server, smtp_port, sender_email, sender_password,
                 "dashboard_password": DASHBOARD_PASSWORD,
                 "owm_api_key": OWM_API_KEY,
                 "fb_page_handle": FB_PAGE_HANDLE,
-                "fb_access_token": FB_ACCESS_TOKEN
+                "fb_access_token": FB_ACCESS_TOKEN,
+                "flask_secret_key": FLASK_SECRET_KEY
             }, f, indent=4)
         return True
     except Exception as e:
@@ -192,6 +260,9 @@ def save_settings_to_file(smtp_server, smtp_port, sender_email, sender_password,
 # Load persistent settings on startup
 load_settings()
 _ensure_api_key()
+_ensure_flask_secret()
+_ensure_dashboard_password()
+app.secret_key = FLASK_SECRET_KEY
 
 from functools import wraps
 
@@ -202,6 +273,28 @@ def require_login(f):
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
+
+# =========================
+# LOGIN BRUTE-FORCE THROTTLE
+# =========================
+# Tracked per-account rather than per-IP: this system has a single "operator" account,
+# and requests can arrive via a Cloudflare tunnel where the real client IP isn't always
+# distinguishable, so a per-IP limit alone could be trivially bypassed.
+LOGIN_MAX_ATTEMPTS = 5
+LOGIN_LOCKOUT_SECONDS = 300  # 5 minutes
+_login_failures = []  # timestamps of recent failed attempts
+
+def _login_rate_limited():
+    now = time.time()
+    while _login_failures and now - _login_failures[0] > LOGIN_LOCKOUT_SECONDS:
+        _login_failures.pop(0)
+    return len(_login_failures) >= LOGIN_MAX_ATTEMPTS
+
+def _record_login_attempt():
+    _login_failures.append(time.time())
+
+def _clear_login_attempts():
+    _login_failures.clear()
 
 # =========================
 # AUDIT LOG
@@ -358,21 +451,69 @@ def send_email_alert(device_id, subject, body, html_body=None):
         "html_body": html_body
     })
 
+def _coerce_int(value, default=0):
+    """Best-effort int conversion that never raises (a malformed sensor reading
+    shouldn't take down processing for the whole payload)."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return default
+
+def _prepare_sensor_payload(payload):
+    """Normalizes an incoming telemetry payload's 'sensors' block: guarantees a dict
+    (a node/simulator sending a non-dict there used to raise AttributeError and drop
+    the whole message), and folds in a top-level 'battery' reading — every real
+    producer (vers_simulator.py, app.js's /api/simulate) sends battery as a sibling
+    of 'sensors', not inside it, so calculate_risk() was never actually seeing it."""
+    if not isinstance(payload, dict):
+        return {}
+    sensors = payload.get('sensors', {})
+    if not isinstance(sensors, dict):
+        sensors = {}
+    if 'battery' not in sensors and 'battery' in payload:
+        sensors = dict(sensors)
+        sensors['battery'] = payload.get('battery')
+    return sensors
+
 def calculate_risk(sensor_data):
     """Calculates risk score based on sensor state, identifies emergencies, and detects faults"""
+    if not isinstance(sensor_data, dict):
+        sensor_data = {}
+
     risk = 0
     emergencies = []
     is_faulty = False
     faults = []
-    
-    # Extract values safely
-    humidity = int(sensor_data.get('humidity', 50))
-    gas = int(sensor_data.get('gas', 0))
-    battery = float(sensor_data.get('battery', 80))
-    fire = int(sensor_data.get('fire', 0))
-    flood = int(sensor_data.get('flood', 0))
-    life_form = int(sensor_data.get('life_form', 0)) or int(sensor_data.get('intruder', 0))
-    
+
+    # Extract values safely — a reading that fails to coerce is itself treated as a
+    # hardware fault rather than raising (which used to crash message handling and
+    # silently drop the entire telemetry frame, including any real fire/flood flag on it).
+    def _num_field(name, default, label, to_int=True):
+        raw = sensor_data.get(name, default)
+        try:
+            return int(raw) if to_int else float(raw)
+        except (TypeError, ValueError):
+            try:
+                value = float(raw)
+                return int(value) if to_int else value
+            except (TypeError, ValueError):
+                is_faulty_flags.append(f'Malformed {label} Reading')
+                return default
+
+    is_faulty_flags = []
+    humidity = _num_field('humidity', 50, 'Humidity')
+    gas = _num_field('gas', 0, 'Gas')
+    fire = _num_field('fire', 0, 'Fire')
+    flood = _num_field('flood', 0, 'Flood')
+    life_form = _num_field('life_form', 0, 'Life-Form') or _num_field('intruder', 0, 'Intruder')
+    battery = _num_field('battery', 80, 'Battery', to_int=False)
+    if is_faulty_flags:
+        is_faulty = True
+        faults.extend(is_faulty_flags)
+
     # Fault heuristic checks
     if humidity <= 0 or humidity >= 100:
         is_faulty = True
@@ -679,11 +820,11 @@ def on_message(client, userdata, msg):
         device_id = j.get("id") or topic.split("/")[-1]
         
         # Calculate risk before logging and emitting
-        sensors = j.get('sensors', {})
+        sensors = _prepare_sensor_payload(j)
         risk_score, emergencies, is_faulty = calculate_risk(sensors)
-        
+
         # --- Earthquake / Network Movement Logic ---
-        is_earthquake = int(sensors.get('earthquake', 0)) or int(sensors.get('movement', 0))
+        is_earthquake = _coerce_int(sensors.get('earthquake', 0)) or _coerce_int(sensors.get('movement', 0))
         current_time = time.time()
         
         if is_earthquake:
@@ -808,15 +949,21 @@ def index():
 def login():
     error = None
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
-        if username == "operator" and password == DASHBOARD_PASSWORD:
-            session["logged_in"] = True
-            write_audit("LOGIN_SUCCESS", f"user={username}", session_id="operator")
-            return redirect(url_for("index"))
+        if _login_rate_limited():
+            error = "Too many failed attempts. Please wait a few minutes and try again."
+            write_audit("LOGIN_RATE_LIMITED", f"ip={request.remote_addr}", session_id="system")
         else:
-            error = "Invalid username or password"
-            write_audit("LOGIN_FAILURE", f"user={username}", session_id="system")
+            username = request.form.get("username", "")
+            password = request.form.get("password", "")
+            if username == "operator" and secrets.compare_digest(password, DASHBOARD_PASSWORD):
+                session["logged_in"] = True
+                _clear_login_attempts()
+                write_audit("LOGIN_SUCCESS", f"user={username}", session_id="operator")
+                return redirect(url_for("index"))
+            else:
+                error = "Invalid username or password"
+                _record_login_attempt()
+                write_audit("LOGIN_FAILURE", f"user={username} ip={request.remote_addr}", session_id="system")
             
     html = """
     <!DOCTYPE html>
@@ -1076,10 +1223,10 @@ def api_simulate():
     """Receives simulation data from frontend, processes it through AI, and broadcasts via sockets"""
     if not (session.get("logged_in") or check_api_key()):
         return jsonify({"status": "error", "message": "Unauthorized: invalid session or missing API key"}), 401
-    data = request.json
+    data = request.json or {}
     device_id = data.get("id", "Unknown")
-    
-    sensors = data.get('sensors', {})
+
+    sensors = _prepare_sensor_payload(data)
     risk_score, emergencies, is_faulty = calculate_risk(sensors)
     data['risk_score'] = risk_score
     data['is_faulty'] = is_faulty
@@ -1103,10 +1250,11 @@ def api_emergency():
 
 @app.route("/api/history")
 def api_history():
-    """Returns the last 100 historical logs in chronological order"""
+    """Returns historical logs in chronological order (default last 1500)"""
+    limit = request.args.get("limit", 1500, type=int)
     conn = db_connect()
     c = conn.cursor()
-    c.execute("SELECT device_id, timestamp, payload FROM sensor_logs ORDER BY id DESC LIMIT 100")
+    c.execute("SELECT device_id, timestamp, payload FROM sensor_logs ORDER BY id DESC LIMIT ?", (limit,))
     rows = c.fetchall()
     conn.close()
     
@@ -1936,25 +2084,51 @@ def public_report_form():
     """
     return render_template_string(html)
 
+ALLOWED_REPORT_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'webp'}
+
+def _safe_float(value, default=0.0):
+    """Best-effort float conversion that never raises — a citizen's malformed GPS
+    value used to throw an unhandled 500 here and lose the whole report submission."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
 @app.route('/api/reports/submit', methods=['POST'])
 def submit_public_report():
     report_type = request.form.get('report_type', 'Other')
     desc = request.form.get('description', '')
     name = request.form.get('reporter_name', '')
-    lat = float(request.form.get('lat', 0))
-    lon = float(request.form.get('lon', 0))
+    lat = _safe_float(request.form.get('lat'), 0.0)
+    lon = _safe_float(request.form.get('lon'), 0.0)
     ts = datetime.now(timezone.utc).isoformat()
-    
+
     image_path = ''
     if 'image' in request.files:
         file = request.files['image']
         if file and file.filename:
             import uuid
-            ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else 'jpg'
+            ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+            if ext not in ALLOWED_REPORT_IMAGE_EXTENSIONS:
+                return jsonify({"status": "error", "message": "Unsupported image type. Use JPG, PNG, GIF, or WEBP."}), 400
             filename = f"{uuid.uuid4().hex}.{ext}"
-            file.save(os.path.join(UPLOAD_FOLDER, filename))
+            save_path = os.path.join(UPLOAD_FOLDER, filename)
+            file.save(save_path)
+            # Verify the uploaded bytes are actually a decodable image (not e.g. an
+            # HTML/SVG file with an image extension slapped on it) before it becomes
+            # a publicly-servable file under /static/uploads/.
+            try:
+                from PIL import Image
+                with Image.open(save_path) as im:
+                    im.verify()
+            except Exception:
+                try:
+                    os.remove(save_path)
+                except OSError:
+                    pass
+                return jsonify({"status": "error", "message": "Invalid or corrupt image file."}), 400
             image_path = f"/static/uploads/{filename}"
-    
+
     conn = db_connect()
     try:
         c = conn.cursor()
@@ -2017,29 +2191,45 @@ def get_public_reports():
 @require_login
 def get_heatmap_data():
     hours = request.args.get('hours', 24, type=int)
-    
+
     conn = db_connect()
     try:
         c = conn.cursor()
-        c.execute("SELECT payload FROM sensor_logs WHERE datetime(timestamp) >= datetime('now', ?)", (f"-{hours} hours",))
+        c.execute("SELECT device_id, payload FROM sensor_logs WHERE datetime(timestamp) >= datetime('now', ?)", (f"-{hours} hours",))
         rows = c.fetchall()
-        
+
         heatmap_data = []
-        for r in rows:
+        device_counts = {}
+        highest_risk = -1
+        highest_risk_device = None
+        for device_id, raw_payload in rows:
             try:
-                payload = json.loads(r[0])
+                payload = json.loads(raw_payload)
                 risk = payload.get("risk_score", 0)
                 if risk > 0:
                     lat = payload.get("lat")
                     lon = payload.get("lon")
                     if lat is not None and lon is not None:
                         heatmap_data.append([lat, lon, risk])
-            except:
+                        device_counts[device_id] = device_counts.get(device_id, 0) + 1
+                        if risk > highest_risk:
+                            highest_risk = risk
+                            highest_risk_device = device_id
+            except Exception:
                 pass
     finally:
         conn.close()
-            
-    return jsonify({"status": "ok", "data": heatmap_data})
+
+    most_active_zone = max(device_counts, key=device_counts.get) if device_counts else None
+    summary = {
+        "total": len(heatmap_data),
+        "highest_risk_device": highest_risk_device or "N/A",
+        "most_active_zone": most_active_zone or "N/A"
+    }
+    # NOTE: response shape is {points, summary} rather than this API's usual {status, data}
+    # wrapper — the frontend's analytics panel (static/app.js generateAnalyticsHeatmap)
+    # was already built against exactly this shape; the endpoint just never produced it.
+    return jsonify({"status": "ok", "points": heatmap_data, "summary": summary})
 
 # =========================
 # FEATURE 5: GEO-FENCE STORAGE
