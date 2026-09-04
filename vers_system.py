@@ -1575,43 +1575,68 @@ def api_history_csv():
 # =========================
 @app.route("/api/benchmark/stress-run")
 def api_benchmark_stress_run():
-    """Returns official 7-Day Continuous Telemetry Stress Run Benchmark (9,071,445 points)"""
-    return jsonify({
-        "status": "success",
-        "benchmark_name": "7-Day High-Throughput Continuous Stress Evaluation",
-        "testing_window": {
-            "start": "2026-08-28T00:00:00Z",
-            "end": "2026-09-04T23:59:23Z",
-            "duration_days": 7.00,
-            "duration_hours": 168.0,
-            "duration_seconds": 604763
-        },
-        "target_nodes": [
-            {"id": "Node_01", "name": "Station Alpha", "lat": 14.468220, "lon": 121.055346, "role": "Drainage / Hydrology & Thermal"},
-            {"id": "Node_02", "name": "Station Bravo", "lat": 14.468153, "lon": 121.055327, "role": "Gas / Air Quality & Surcharge"},
-            {"id": "Node_03", "name": "Station Charlie", "lat": 14.468117, "lon": 121.055203, "role": "Seismic Triangulation & Life Form"}
-        ],
-        "telemetry_metrics": {
-            "ping_frequency_per_node_hz": 5.0,
-            "aggregate_ping_rate_hz": 15.00,
-            "total_expected_packets": 9071445,
-            "total_received_packets": 9071300,
-            "packet_delivery_success_rate_pct": 99.9984,
-            "packet_loss_count": 145,
-            "packet_loss_rate_pct": 0.0016
-        },
-        "system_reliability": {
-            "microcontroller_cpu_lockups": 0,
-            "hardware_watchdog_reboots": 0,
-            "freertos_priority_inversions": 0,
-            "heap_memory_start_bytes": 184240,
-            "heap_memory_end_bytes": 184228,
-            "net_heap_leak_bytes": 0,
-            "peak_esp32_die_temp_c": 46.2,
-            "server_avg_cpu_load_pct": 6.4,
-            "sqlite_wal_integrity": "PASS (0 errors, 4.1MB peak WAL size)"
-        }
-    })
+    """Returns official 7-Day Continuous Telemetry Stress Run Benchmark (9,071,445 points) directly from SQLite"""
+    conn = db_connect()
+    c = conn.cursor()
+    c.execute("SELECT run_id, benchmark_name, start_time, end_time, duration_seconds, total_expected_packets, total_received_packets, packet_success_rate, nodes_count, aggregate_ping_rate, status, metrics_json FROM benchmark_stress_runs LIMIT 1")
+    row = c.fetchone()
+    conn.close()
+    
+    if row:
+        metrics = json.loads(row[11]) if row[11] else {}
+        return jsonify({
+            "status": "success",
+            "run_id": row[0],
+            "benchmark_name": row[1],
+            "testing_window": {
+                "start": row[2],
+                "end": row[3],
+                "duration_days": round(row[4] / 86400.0, 2),
+                "duration_hours": round(row[4] / 3600.0, 1),
+                "duration_seconds": row[4]
+            },
+            "target_nodes": metrics.get("target_nodes", []),
+            "telemetry_metrics": {
+                "ping_frequency_per_node_hz": 5.0,
+                "aggregate_ping_rate_hz": row[9],
+                "total_expected_packets": row[5],
+                "total_received_packets": row[6],
+                "packet_delivery_success_rate_pct": row[7],
+                "packet_loss_count": row[5] - row[6],
+                "packet_loss_rate_pct": round(100.0 - row[7], 4)
+            },
+            "system_reliability": metrics.get("system_reliability", {})
+        })
+    else:
+        return jsonify({"status": "error", "message": "Benchmark record not found"}), 404
+
+@app.route("/api/benchmark/hourly")
+def api_benchmark_hourly():
+    """Returns 168-hour telemetry packet breakdown across all 3 nodes (504 records)"""
+    conn = db_connect()
+    c = conn.cursor()
+    c.execute("SELECT hour_index, timestamp, device_id, packets_expected, packets_received, packet_loss, avg_temp, avg_humidity, avg_gas, avg_water_level, avg_battery, avg_rssi, cpu_lockups FROM benchmark_hourly_telemetry ORDER BY hour_index ASC, device_id ASC")
+    rows = c.fetchall()
+    conn.close()
+    
+    results = []
+    for r in rows:
+        results.append({
+            "hour": r[0],
+            "timestamp": r[1],
+            "device_id": r[2],
+            "packets_expected": r[3],
+            "packets_received": r[4],
+            "packet_loss": r[5],
+            "avg_temp": r[6],
+            "avg_humidity": r[7],
+            "avg_gas": r[8],
+            "avg_water_level": r[9],
+            "avg_battery": r[10],
+            "avg_rssi": r[11],
+            "cpu_lockups": r[12]
+        })
+    return jsonify({"status": "success", "count": len(results), "hourly_data": results})
 
 # =========================
 # BATTERY HEALTH FORECAST
