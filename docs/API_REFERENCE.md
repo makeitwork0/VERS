@@ -1,6 +1,6 @@
 # VERS API Reference
 
-This document provides a comprehensive reference for the VERS (Vital Emergency Response System) REST API, WebSocket events, and MQTT topics.
+This document provides a comprehensive reference for the VERS (Versatile Emergency Response System) REST API, WebSocket events, and MQTT topics.
 
 ## Authentication Methods
 

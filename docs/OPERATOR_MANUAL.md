@@ -36,7 +36,7 @@
 
 ## 1. Introduction
 
-VERS (Vigilant Early-Response System) is a real-time critical infrastructure monitoring platform designed for disaster preparedness and emergency response. The system aggregates sensor data from distributed field nodes, integrates national weather and hazard feeds, and provides operators with a unified command dashboard for situational awareness and incident management.
+VERS (Versatile Emergency Response System) is a real-time critical infrastructure monitoring platform designed for disaster preparedness and multi-hazard emergency response. The system aggregates diverse sensor data from distributed field nodes, integrates national weather and hazard feeds, and provides operators with a unified command dashboard for situational awareness and incident management.
 
 This manual covers every aspect of the VERS dashboard that an operator needs to perform their duties — from initial login through daily monitoring, incident response, and system configuration.
 

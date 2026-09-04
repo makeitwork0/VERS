@@ -1,7 +1,7 @@
-# 🛰️ VERS (Village Emergency Response System)
-### Advanced IoT Disaster Monitoring, Flood Early Warning & Emergency Dispatch System
+# 🛰️ VERS (Versatile Emergency Response System)
+### Advanced Multi-Sensor IoT Disaster Monitoring, Multi-Hazard Risk Assessment & Emergency Dispatch Platform
 
-VERS is an enterprise-grade IoT disaster management and emergency monitoring system developed for critical infrastructure, local disaster risk reduction (LDRRMO), and community safety.
+**VERS** (**Versatile Emergency Response System**) is an enterprise-grade IoT disaster management and multi-hazard emergency monitoring system. The name *Versatile* reflects its ability to ingest, calibrate, and correlate diverse hardware sensor streams (water level, MQ-2 gas/smoke, flame, temperature, humidity, life form, GPS) alongside real-time national meteorological data (PAGASA rainfall warnings, GDACS cyclone cones, weather radar) into a unified risk matrix.
 
 ---
 

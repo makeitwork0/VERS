@@ -930,7 +930,7 @@ def login():
     <body>
         <div class="login-card">
             <h1>VERS System Access</h1>
-            <p class="subtitle">Village Emergency Response Dashboard Gate</p>
+            <p class="subtitle">Versatile Emergency Response Dashboard Gate</p>
             
             """ + (f'<div class="error-box">{error}</div>' if error else '') + """
             
