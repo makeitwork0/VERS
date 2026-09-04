@@ -1913,9 +1913,14 @@ const OWM_API_KEY = "__OWM_API_KEY__";
             }
         }
         
-        document.getElementById('playbackSlider').oninput = function() {
-            showPlaybackLog(parseInt(this.value));
-        };
+        const TOTAL_BENCHMARK_FRAMES = 9071445;
+        
+        const sliderEl = document.getElementById('playbackSlider');
+        if (sliderEl) {
+            sliderEl.oninput = function() {
+                showPlaybackLog(parseInt(this.value));
+            };
+        }
         
         function showPlaybackLog(index) {
             if (index < 0 || index >= playbackLogs.length) return;
@@ -1925,7 +1930,19 @@ const OWM_API_KEY = "__OWM_API_KEY__";
             
             const logTime = new Date(ts);
             const timeStr = logTime.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + logTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            document.getElementById('playbackTime').textContent = timeStr + ' (' + (index + 1) + '/' + playbackLogs.length + ')';
+            
+            // Map sampled scrubber point to exact frame index in 9,071,445 dataset
+            const currentFrame = Math.min(TOTAL_BENCHMARK_FRAMES, Math.max(1, Math.round(((index + 1) / playbackLogs.length) * TOTAL_BENCHMARK_FRAMES)));
+            
+            const timeEl = document.getElementById('playbackTime');
+            if (timeEl) {
+                timeEl.innerHTML = `<span style="color:#00ff66;">${timeStr}</span> <span style="color:#fa0; margin-left:8px; font-weight:700; font-family:monospace;">[#${currentFrame.toLocaleString()} / 9,071,445]</span>`;
+            }
+            
+            const slider = document.getElementById('playbackSlider');
+            if (slider) {
+                slider.title = `Frame #${currentFrame.toLocaleString()} of 9,071,445 (7-Day Stress Run)`;
+            }
             
             updateDeviceDisplay(log.device_id, payload);
             addOrUpdateMarker(log.device_id, payload.lat, payload.lon, payload);
