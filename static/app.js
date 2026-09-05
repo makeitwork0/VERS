@@ -592,7 +592,7 @@ const OWM_API_KEY = "__OWM_API_KEY__";
         ];
 
         window.addEventListener('load', function() {
-            let savedState = { lat: 14.4681, lng: 121.0552, zoom: 15, baseMap: "Google Roads" };
+            let savedState = { lat: 14.4681, lng: 121.0552, zoom: 15, baseMap: "Google Dark Roads" };
             try { 
                 const savedStr = localStorage.getItem('vers_map_state');
                 if (savedStr) savedState = JSON.parse(savedStr); 
@@ -600,12 +600,9 @@ const OWM_API_KEY = "__OWM_API_KEY__";
 
             map = L.map('map', { preferCanvas: true }).setView([savedState.lat, savedState.lng], savedState.zoom);
             
-            const googleRoads = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
-                attribution: '&copy; Google Maps (Roads)',
-                maxZoom: 20
-            });
-            const darkMatter = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                attribution: '&copy; CartoDB Dark Matter',
+            const googleDarkRoads = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                attribution: '&copy; Google Maps (Dark Roads)',
+                className: 'google-dark-tiles',
                 maxZoom: 20
             });
             const googleSatellite = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
@@ -616,8 +613,17 @@ const OWM_API_KEY = "__OWM_API_KEY__";
                 attribution: '&copy; Google Maps (Hybrid)',
                 maxZoom: 20
             });
-            const googleTerrain = L.tileLayer('https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', {
-                attribution: '&copy; Google Maps (Terrain)',
+            const googleStandardRoads = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                attribution: '&copy; Google Maps (Standard Light)',
+                maxZoom: 20
+            });
+            const googleDarkTerrain = L.tileLayer('https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', {
+                attribution: '&copy; Google Maps (Dark Terrain)',
+                className: 'google-dark-tiles',
+                maxZoom: 20
+            });
+            const darkMatter = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; CartoDB Dark Matter',
                 maxZoom: 20
             });
             const osmStandard = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -625,7 +631,8 @@ const OWM_API_KEY = "__OWM_API_KEY__";
                 maxZoom: 19
             });
             const localOfflineRoads = L.tileLayer('/static/tiles/{z}/{x}/{y}.png', {
-                attribution: '&copy; Offline Google Maps (Local Backup)',
+                attribution: '&copy; Offline Google Maps (Dark Backup)',
+                className: 'google-dark-tiles',
                 minZoom: 12,
                 maxZoom: 17
             });
@@ -641,17 +648,18 @@ const OWM_API_KEY = "__OWM_API_KEY__";
             const elevationLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: '&copy; OpenTopoMap' });
 
             const baseMaps = {
-                "Google Roads": googleRoads,
+                "Google Dark Roads": googleDarkRoads,
                 "Google Satellite": googleSatellite,
                 "Google Hybrid": googleHybrid,
-                "Google Terrain": googleTerrain,
+                "Google Standard (Light)": googleStandardRoads,
+                "Google Terrain (Dark)": googleDarkTerrain,
                 "Dark Mode (CartoDB)": darkMatter,
                 "OpenStreetMap": osmStandard,
                 "⛰️ Elevation (OpenTopoMap)": elevationLayer,
                 "Offline Backup (Taguig)": localOfflineRoads
             };
 
-            const selectedBaseMap = baseMaps[savedState.baseMap] || googleRoads;
+            const selectedBaseMap = baseMaps[savedState.baseMap] || (savedState.baseMap === "Google Roads" ? googleDarkRoads : null) || googleDarkRoads;
             selectedBaseMap.addTo(map);
 
             const overlayMaps = {

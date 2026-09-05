@@ -456,3 +456,18 @@ input[type="text"]:focus, input[type="number"]:focus, select:focus, textarea:foc
         display: none !important;
     }
 }
+
+/* ==========================================================================
+   GOOGLE MAPS DARK MODE TILE FILTER (SCADA / GOTHAM HIGH-CONTRAST THEME)
+   ========================================================================== */
+.leaflet-tile.google-dark-tiles,
+.google-dark-tiles .leaflet-tile,
+img.leaflet-tile.google-dark-tiles {
+    filter: invert(100%) hue-rotate(180deg) brightness(85%) contrast(115%) saturate(85%) !important;
+}
+
+/* Deep onyx canvas background for smooth tile transitions */
+.leaflet-container {
+    background-color: #070b0e !important;
+}
+
